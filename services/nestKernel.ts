@@ -4,36 +4,11 @@ import { NestState, HomeMode, ThemeMode, UserRole, UserProfile, WaterState, Hygi
 import { process_refill_logic, process_calibration_logic, calculate_current_level } from './waterLogic';
 import { INITIAL_HYGIENE_ITEMS, HYGIENE_DEFAULT_CONFIG } from './hygieneLogic';
 import { INITIAL_PET_ITEMS, calculate_pet_entropy, PetCareStatus, get_pet_status, PET_DEFAULT_CONFIG } from './petLogic';
+import { authHeaders, getCurrentUser } from './authService';
 
 const STORAGE_KEY = 'nest_kernel_v1_5_0'; // Kept for migration detection
 const API_BASE = '/api/state';
 const SAVE_DEBOUNCE_MS = 500;
-
-const INITIAL_USER: UserProfile = {
-  id: 'u_001',
-  name: '白PP',
-  role: UserRole.OWNER,
-  isCurrentUser: true,
-  avatarUrl: 'bg-wood-200'
-};
-
-const SIMULATED_MEMBER: UserProfile = {
-  id: 'u_sim_01',
-  name: '王冬冬',
-  role: UserRole.MEMBER,
-  isCurrentUser: false,
-  avatarUrl: 'bg-blue-100'
-};
-
-// Default Pet
-const SIMULATED_PET: UserProfile = {
-  id: 'u_pet_01',
-  name: '土豆',
-  role: UserRole.PET,
-  isCurrentUser: false,
-  species: PetSpecies.CAT,
-  avatarUrl: 'bg-orange-100'
-};
 
 // Base Rate per person (L/h)
 const PER_PERSON_RATE = 0.106;
@@ -110,31 +85,45 @@ const INITIAL_INVENTORY_STATE: InventoryState = {
 };
 
 
-const DEFAULT_STATE: NestState = {
-  version: '1.5.0',
-  user: INITIAL_USER,
-  homeName: '白PP的家',
-  members: [INITIAL_USER, SIMULATED_MEMBER, SIMULATED_PET],
-  homeMode: HomeMode.HOME,
-  themeMode: ThemeMode.LIGHT,
-  installDate: Date.now(),
-  debug_time_offset: 0,
-  modules: {
-    waterEnabled: true,
-    inventoryEnabled: true,
-    hygieneEnabled: true,
-    petEnabled: true,
-    fridgeEnabled: false, // DISABLED
-  },
-  moduleData: {
-    water: INITIAL_WATER_STATE,
-    hygiene: INITIAL_HYGIENE_STATE,
-    pet: INITIAL_PET_STATE,
-    inventory: INITIAL_INVENTORY_STATE,
-    fridge: { fridgeTemp: 4, freezerTemp: -18, expiringCount: 2 }
-  },
-  moduleOrder: ['water', 'pet', 'hygiene', 'inventory']
-};
+// 根据当前登录用户动态生成默认状态
+function buildDefaultState(): NestState {
+  const authUser = getCurrentUser();
+  const displayName = authUser?.displayName ?? '用户';
+
+  const initialUser: UserProfile = {
+    id: `u_${authUser?.id ?? '001'}`,
+    name: displayName,
+    role: UserRole.OWNER,
+    isCurrentUser: true,
+    avatarUrl: 'bg-wood-200'
+  };
+
+  return {
+    version: '1.5.0',
+    user: initialUser,
+    homeName: `${displayName}的家`,
+    members: [initialUser], // 只有当前用户一人，不预设模拟成员
+    homeMode: HomeMode.HOME,
+    themeMode: ThemeMode.LIGHT,
+    installDate: Date.now(),
+    debug_time_offset: 0,
+    modules: {
+      waterEnabled: true,
+      inventoryEnabled: true,
+      hygieneEnabled: true,
+      petEnabled: false, // 新用户默认关闭，有宠物再开
+      fridgeEnabled: false,
+    },
+    moduleData: {
+      water: INITIAL_WATER_STATE,
+      hygiene: INITIAL_HYGIENE_STATE,
+      pet: INITIAL_PET_STATE,
+      inventory: INITIAL_INVENTORY_STATE,
+      fridge: { fridgeTemp: 4, freezerTemp: -18, expiringCount: 2 }
+    },
+    moduleOrder: ['water', 'hygiene', 'inventory']
+  };
+}
 
 export type DebugScenario =
   | 'LOW'
@@ -149,7 +138,7 @@ export type DebugScenario =
 
 // Helper: merge loaded data with defaults (handles version upgrades)
 function mergeWithDefaults(parsed: any): NestState {
-  const merged = { ...DEFAULT_STATE, ...parsed };
+  const merged = { ...buildDefaultState(), ...parsed };
 
   if (!merged.moduleData.water) merged.moduleData.water = INITIAL_WATER_STATE;
 
@@ -199,7 +188,7 @@ function mergeWithDefaults(parsed: any): NestState {
 }
 
 export const useNestKernel = () => {
-  const [state, setState] = useState<NestState>(DEFAULT_STATE);
+  const [state, setState] = useState<NestState>(() => buildDefaultState());
   const [isLoaded, setIsLoaded] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isFirstLoad = useRef(true);
@@ -209,7 +198,7 @@ export const useNestKernel = () => {
     const loadState = async () => {
       try {
         // Step 1: Try loading from the database API
-        const response = await fetch(API_BASE);
+        const response = await fetch(API_BASE, { headers: authHeaders() });
         const result = await response.json();
 
         if (result.exists && result.state) {
@@ -228,7 +217,7 @@ export const useNestKernel = () => {
             console.log('[Nest Kernel] Migrating localStorage data to database...');
             const migrateRes = await fetch(`${API_BASE}/migrate`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: authHeaders(),
               body: JSON.stringify(merged),
             });
             const migrateResult = await migrateRes.json();
@@ -279,7 +268,7 @@ export const useNestKernel = () => {
       try {
         await fetch(API_BASE, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: authHeaders(),
           body: JSON.stringify(state),
         });
       } catch (err) {
@@ -733,6 +722,10 @@ export const useNestKernel = () => {
     });
   }, []);
 
+  const resetDebugTime = useCallback(() => {
+    setState(prev => ({ ...prev, debug_time_offset: 0 }));
+  }, []);
+
   const debugWater = useCallback((scenario: DebugScenario) => {
     setState(prev => {
       const now = getSystemTime(prev);
@@ -799,7 +792,7 @@ export const useNestKernel = () => {
   }, []);
 
   const resetKernel = useCallback(async () => {
-    setState(DEFAULT_STATE);
+    setState(buildDefaultState());
     try {
       await fetch(`${API_BASE}/reset`, { method: 'POST' });
     } catch (err) {
@@ -838,6 +831,7 @@ export const useNestKernel = () => {
       addInventoryCategory, // Exported
       deleteInventoryCategory, // Exported
       debugTimeTravel,
+      resetDebugTime,
       debugWater,
       resetKernel
     }

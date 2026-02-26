@@ -1,16 +1,20 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db.js';
+import { requireAuth } from '../middleware/auth.js';
 
 const router = Router();
 
+// All routes require authentication
+router.use(requireAuth);
+
 /**
  * GET /api/state
- * Returns the full NestState JSON, or null if no state saved yet.
+ * Returns the full NestState JSON for the current user's family.
  */
-router.get('/', (_req: Request, res: Response) => {
+router.get('/', (req: Request, res: Response) => {
     try {
         const db = getDb();
-        const row = db.prepare('SELECT data FROM nest_state WHERE id = 1').get() as { data: string } | undefined;
+        const row = db.prepare('SELECT data FROM nest_state WHERE family_id = ?').get(req.familyId) as { data: string } | undefined;
 
         if (row) {
             res.json({ exists: true, state: JSON.parse(row.data) });
@@ -25,7 +29,7 @@ router.get('/', (_req: Request, res: Response) => {
 
 /**
  * PUT /api/state
- * Saves the full NestState JSON. Upserts (insert or replace).
+ * Saves the full NestState JSON for the current user's family.
  */
 router.put('/', (req: Request, res: Response) => {
     try {
@@ -38,13 +42,12 @@ router.put('/', (req: Request, res: Response) => {
 
         const db = getDb();
         const dataStr = JSON.stringify(state);
-
-        const existing = db.prepare('SELECT id FROM nest_state WHERE id = 1').get();
+        const existing = db.prepare('SELECT id FROM nest_state WHERE family_id = ?').get(req.familyId);
 
         if (existing) {
-            db.prepare('UPDATE nest_state SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1').run(dataStr);
+            db.prepare('UPDATE nest_state SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE family_id = ?').run(dataStr, req.familyId);
         } else {
-            db.prepare('INSERT INTO nest_state (id, data) VALUES (1, ?)').run(dataStr);
+            db.prepare('INSERT INTO nest_state (family_id, data) VALUES (?, ?)').run(req.familyId, dataStr);
         }
 
         res.json({ success: true, size: dataStr.length });
@@ -56,12 +59,12 @@ router.put('/', (req: Request, res: Response) => {
 
 /**
  * POST /api/state/reset
- * Deletes the saved state. Frontend will revert to DEFAULT_STATE on next load.
+ * Deletes the saved state for the current family.
  */
-router.post('/reset', (_req: Request, res: Response) => {
+router.post('/reset', (req: Request, res: Response) => {
     try {
         const db = getDb();
-        db.prepare('DELETE FROM nest_state WHERE id = 1').run();
+        db.prepare('DELETE FROM nest_state WHERE family_id = ?').run(req.familyId);
         res.json({ success: true, message: 'State has been reset' });
     } catch (err) {
         console.error('[API] POST /state/reset error:', err);
@@ -71,12 +74,12 @@ router.post('/reset', (_req: Request, res: Response) => {
 
 /**
  * GET /api/state/export
- * Downloads the current state as a JSON file for backup.
+ * Downloads the current family state as a JSON backup.
  */
-router.get('/export', (_req: Request, res: Response) => {
+router.get('/export', (req: Request, res: Response) => {
     try {
         const db = getDb();
-        const row = db.prepare('SELECT data FROM nest_state WHERE id = 1').get() as { data: string } | undefined;
+        const row = db.prepare('SELECT data FROM nest_state WHERE family_id = ?').get(req.familyId) as { data: string } | undefined;
 
         if (!row) {
             res.status(404).json({ error: 'No state to export' });
@@ -84,7 +87,7 @@ router.get('/export', (_req: Request, res: Response) => {
         }
 
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        const filename = `nest-backup-${timestamp}.json`;
+        const filename = `nest-backup-${req.familyId}-${timestamp}.json`;
 
         res.setHeader('Content-Type', 'application/json');
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -97,8 +100,7 @@ router.get('/export', (_req: Request, res: Response) => {
 
 /**
  * POST /api/state/import
- * Imports a backup JSON file, replacing the current state.
- * Also creates a backup of the current state before importing.
+ * Imports a backup JSON, replacing the current family state.
  */
 router.post('/import', (req: Request, res: Response) => {
     try {
@@ -112,22 +114,22 @@ router.post('/import', (req: Request, res: Response) => {
         const db = getDb();
 
         // Backup current state before importing
-        const currentRow = db.prepare('SELECT data FROM nest_state WHERE id = 1').get() as { data: string } | undefined;
+        const currentRow = db.prepare('SELECT data FROM nest_state WHERE family_id = ?').get(req.familyId) as { data: string } | undefined;
         if (currentRow) {
-            db.prepare('INSERT INTO state_backups (data, label) VALUES (?, ?)').run(
+            db.prepare('INSERT INTO state_backups (family_id, data, label) VALUES (?, ?, ?)').run(
+                req.familyId,
                 currentRow.data,
                 `Pre-import backup at ${new Date().toISOString()}`
             );
         }
 
-        // Import new state
         const dataStr = JSON.stringify(importedState);
-        const existing = db.prepare('SELECT id FROM nest_state WHERE id = 1').get();
+        const existing = db.prepare('SELECT id FROM nest_state WHERE family_id = ?').get(req.familyId);
 
         if (existing) {
-            db.prepare('UPDATE nest_state SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1').run(dataStr);
+            db.prepare('UPDATE nest_state SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE family_id = ?').run(dataStr, req.familyId);
         } else {
-            db.prepare('INSERT INTO nest_state (id, data) VALUES (1, ?)').run(dataStr);
+            db.prepare('INSERT INTO nest_state (family_id, data) VALUES (?, ?)').run(req.familyId, dataStr);
         }
 
         res.json({ success: true, message: 'State imported successfully' });
@@ -139,8 +141,7 @@ router.post('/import', (req: Request, res: Response) => {
 
 /**
  * POST /api/state/migrate
- * Migrates localStorage data to SQLite (one-time, called from frontend).
- * Only writes if no state exists in the database yet.
+ * One-time migration: localStorage → SQLite (only writes if family has no state yet)
  */
 router.post('/migrate', (req: Request, res: Response) => {
     try {
@@ -152,19 +153,17 @@ router.post('/migrate', (req: Request, res: Response) => {
         }
 
         const db = getDb();
-        const existing = db.prepare('SELECT id FROM nest_state WHERE id = 1').get();
+        const existing = db.prepare('SELECT id FROM nest_state WHERE family_id = ?').get(req.familyId);
 
         if (existing) {
-            // Database already has data — don't overwrite
-            res.json({ success: true, migrated: false, message: 'Database already has state, skipping migration' });
+            res.json({ success: true, migrated: false, message: 'Family already has state, skipping migration' });
             return;
         }
 
-        // First time migration from localStorage
         const dataStr = JSON.stringify(localStorageState);
-        db.prepare('INSERT INTO nest_state (id, data) VALUES (1, ?)').run(dataStr);
+        db.prepare('INSERT INTO nest_state (family_id, data) VALUES (?, ?)').run(req.familyId, dataStr);
 
-        console.log('[DB] Successfully migrated localStorage data to SQLite');
+        console.log(`[DB] Migrated localStorage data to SQLite for family: ${req.familyId}`);
         res.json({ success: true, migrated: true, message: 'Successfully migrated from localStorage' });
     } catch (err) {
         console.error('[API] POST /state/migrate error:', err);
