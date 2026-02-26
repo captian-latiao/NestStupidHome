@@ -1,20 +1,131 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# 🏠 Nest — Home Digital Twin
 
-# Run and deploy your AI Studio app
+> 运行在口袋里的家庭数字孪生体。离线优先，确定性算法，零打扰地感知家的状态。
 
-This contains everything you need to run your app locally.
+---
 
-View your app in AI Studio: https://ai.studio/apps/drive/1spVzWW3TF1nA_A0MRyv6UOItUlqCtwR2
+## 产品愿景
 
-## Run Locally
+Nest 不是一个智能家居平台，也不依赖任何云端 AI。
 
-**Prerequisites:**  Node.js
+它的目标只有一个：**用严谨的算法，帮你看清家里正在悄悄发生的事**。
 
+- 饮用水还剩几天？
+- 哪些消耗品快断供了？
+- 猫厕所有多久没铲了？
+- 家里有多久没有认真打扫？
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+这些问题的答案不需要联网，不需要传感器，只需要你在"关键节点"记录一下——剩下的，交给算法。
+
+---
+
+## 核心设计原则
+
+| 原则 | 含义 |
+|---|---|
+| **离线优先 (Local-First)** | 所有计算在本地完成，网络仅用于备份。断网不影响任何功能。 |
+| **确定性算法** | 严禁生成式 AI 介入业务预测。所有数据推演基于明确的数学模型。 |
+| **零阻力录入** | 以"换水""开封""铲屎"等关键动作为算法锚点，用户无需频繁记录。 |
+
+---
+
+## 功能模块
+
+### 🏠 主控仪表盘 (Dashboard)
+全局信息驾驶舱，只展示结果和行动点。
+- **核心指标卡片**：各业务模块的实时状态快照（水位、库存、清洁度）
+- **智能管家晨报**：每日首次打开时，由管家"军军（猫）"播报昨日数据摘要
+- **异常预警**：算法检测到消耗速率异常时主动提示
+
+---
+
+### 💧 饮用水管理 (Water Steward)
+基于时间衰减算法的水位推演引擎。
+
+- 以"换水"动作为锚点，自动推演剩余水量
+- 结合家庭人数（`family_member_count`）动态调整日消耗基准（`2.0L × 人数`）
+- 结合家庭作息时间，在睡眠时段暂停水位扣减
+- 提供剩余百分比 + 剩余天数估算
+
+---
+
+### 📦 消耗品库存 (Inventory)
+解决家庭物资的"断供焦虑"与"过度囤积"。
+
+- 以"开封"动作为核心数据源，记录每次从储备取用的时刻
+- 使用 **60天滑动窗口**算法自动计算消耗速率
+- 预测囤货剩余天数，在 3 天内或低于阈值时触发预警
+- 视觉堆叠：用 Emoji Icon 的数量直观呈现库存水位
+
+---
+
+### 🧹 清洁管理 (Hygiene)
+正计时逻辑，量化"有多久没打扫"。
+
+- 以"完成打扫"为锚点，实时计算各区域的清洁紧迫度
+- 整洁度评分随时间推移自动衰减，超期时触发视觉老化效果
+
+---
+
+### 🐱 宠物护理 (Pet Care)
+复用清洁模块的紧迫度算法，针对宠物场景定制。
+
+- 追踪投喂、铲屎、换水、洗澡、剪指甲等低频护理事项
+- 多宠物家庭自动激活 `LoadFactor = 1.5`（共享资源消耗加速 50%）
+- 采用宠物第一人称视角文案，增加情感连接（"本喵要生气了！😾"）
+
+---
+
+## 技术架构
+
+```
+NestStupidHome/
+├── server/          # Express.js 后端 + SQLite 本地数据库
+│   ├── index.ts     # API 入口
+│   ├── db.ts        # 数据库连接与初始化
+│   └── routes/      # 业务路由
+├── services/        # 核心算法层（与 UI 解耦）
+│   ├── nestKernel.ts      # 全局状态计算
+│   ├── waterLogic.ts      # 饮用水推演算法
+│   ├── inventoryLogic.ts  # 库存消耗率计算
+│   ├── hygieneLogic.ts    # 清洁/宠物紧迫度算法
+│   └── petLogic.ts        # 宠物护理逻辑
+├── prd/             # 产品需求文档
+└── vite.config.ts   # 前端构建配置（React + Vite）
+```
+
+**技术栈：** React · TypeScript · Vite · Express.js · SQLite (`better-sqlite3`)
+
+---
+
+## 本地运行
+
+**前置要求：** Node.js 18+
+
+```bash
+# 1. 安装依赖
+npm install
+
+# 2. 启动（同时启动前端 + 后端）
+npm run dev
+```
+
+- 前端：`http://localhost:5173`
+- 后端 API：`http://localhost:3000`（或配置的端口）
+
+---
+
+## 版本记录
+
+| 版本 | 日期 | 内容 |
+|---|---|---|
+| v0.1 | 2025-01 | 确立 Nest 概念，完成水管家基础逻辑验证 |
+| v0.2 | 2026-01-26 | 引入家庭人数与作息作为算法核心参数因子 |
+| v0.3 | 2026-01-27 | 新增清洁与空间管理模块 |
+| v0.4 | 2026-01-27 | 新增宠物护理模块 |
+| v0.5 | 2026-02-07 | 新增库存管理模块 |
+| **v0.5.0207** | **2026-02-11** | **后端迁移：localStorage → SQLite 本地数据库** |
+
+---
+
+*Nest — 让家有据可查。*
