@@ -416,7 +416,7 @@ const App: React.FC<{ onLogout?: () => void }> = ({ onLogout }) => {
               })}
             </Reorder.Group>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4">
               {activeOrder.map((moduleId) => {
                 const module = MODULE_REGISTRY[moduleId];
                 if (!module) return null;
@@ -1064,8 +1064,8 @@ const App: React.FC<{ onLogout?: () => void }> = ({ onLogout }) => {
         )}
       </main>
 
-      <div className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-md border-t border-wood-100/50 pb-safe z-50">
-        <div className="max-w-md mx-auto px-6 h-20 flex items-center justify-between md:max-w-2xl lg:max-w-4xl">
+      <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[414px] bg-white/80 backdrop-blur-md border-t border-wood-100/50 pb-safe z-50 sm:rounded-b-[40px]">
+        <div className="px-6 h-20 flex items-center justify-between">
           <NavButton active={viewState.tab === 'nest'} onClick={() => setViewState({ tab: 'nest' })} icon={Bird} label="Nest" />
           <NavButton active={viewState.tab === 'life'} onClick={() => setViewState({ tab: 'life' })} icon={Coffee} label="生活" />
           <NavButton active={viewState.tab === 'me'} onClick={() => setViewState({ tab: 'me' })} icon={User} label="我的" />
